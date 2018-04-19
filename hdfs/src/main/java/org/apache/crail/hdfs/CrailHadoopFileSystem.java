@@ -52,46 +52,50 @@ import org.apache.hadoop.util.Progressable;
 
 public class CrailHadoopFileSystem extends FileSystem {
 	private static final Logger LOG = CrailUtils.getLogger();
+
+	static final String SCHEME = "crail";
+
 	private CrailStore dfs;
 	private Path workingDir;
 	private URI uri;
-	
+
 	public CrailHadoopFileSystem() throws IOException {
 		LOG.info("CrailHadoopFileSystem construction");
 		dfs = null;
 	}
-	
+
 	@Override
 	public void initialize(URI uri, Configuration conf) throws IOException {
 		super.initialize(uri, conf);
 		setConf(conf);
-		
+
 		try {
 			CrailConfiguration crailConf = new CrailConfiguration();
 			this.dfs = CrailStore.newInstance(crailConf);
 			Path _workingDir = new Path("/user/" + CrailConstants.USER);
-			this.workingDir = new Path("/user/" + CrailConstants.USER).makeQualified(uri, _workingDir);	
+			this.workingDir = new Path("/user/" + CrailConstants.USER).makeQualified(uri, _workingDir);
 			this.uri = URI.create(CrailConstants.NAMENODE_ADDRESS);
 			LOG.info("CrailHadoopFileSystem fs initialization done..");
 		} catch(Exception e){
 			throw new IOException(e);
 		}
 	}
-	
+
 	public String getScheme() {
 		return SCHEME;
 	}
 
 	public URI getUri() {
 		return uri;
-	}	
+	}
 
 	public FSDataInputStream open(Path path, int bufferSize) throws IOException {
+		statistics.incrementReadOps(1);
 		CrailFile fileInfo = null;
 		try {
 			fileInfo = dfs.lookup(path.toUri().getRawPath()).get().asFile();
 			CrailBufferedInputStream inputStream = fileInfo.getBufferedInputStream(fileInfo.getCapacity());
-			return new CrailHDFSInputStream(inputStream);
+			return new CrailHDFSInputStream(inputStream, statistics);
 		} catch (Exception e) {
 			throw new IOException(e);
 		}
@@ -101,6 +105,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 	public FSDataOutputStream create(Path path, FsPermission permission,
 			boolean overwrite, int bufferSize, short replication,
 			long blockSize, Progressable progress) throws IOException {
+		statistics.incrementWriteOps(1);
 		CrailFile fileInfo = null;
 		try {
 			fileInfo = dfs.create(path.toUri().getRawPath(), CrailNodeType.DATAFILE, CrailStorageClass.PARENT, CrailLocationClass.PARENT, true).get().asFile();
@@ -111,7 +116,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 				throw new IOException(e);
 			}
 		}
-		
+
 		if (fileInfo == null) {
 			Path parent = path.getParent();
 			this.mkdirs(parent, FsPermission.getDirDefault());
@@ -121,7 +126,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 				throw new IOException(e);
 			}
 		}
-		
+
 		CrailBufferedOutputStream outputStream = null;
 		if (fileInfo != null){
 			try {
@@ -131,9 +136,9 @@ public class CrailHadoopFileSystem extends FileSystem {
 				throw new IOException(e);
 			}
 		}
-		
+
 		if (outputStream != null){
-			return new CrailHDFSOutputStream(outputStream, statistics);					
+			return new CrailHDFSOutputStream(outputStream, statistics);
 		} else {
 			throw new IOException("Failed to create file, path " + path.toString());
 		}
@@ -146,6 +151,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 
 	@Override
 	public boolean rename(Path src, Path dst) throws IOException {
+		statistics.incrementWriteOps(1);
 		try {
 			CrailNode file = dfs.rename(src.toUri().getRawPath(), dst.toUri().getRawPath()).get();
 			if (file != null){
@@ -159,6 +165,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 
 	@Override
 	public boolean delete(Path path, boolean recursive) throws IOException {
+		statistics.incrementWriteOps(1);
 		try {
 			CrailNode file = dfs.delete(path.toUri().getRawPath(), recursive).get();
 			if (file != null){
@@ -184,7 +191,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 					if (directFile.getType().isDirectory()) {
 						permission = FsPermission.getDirDefault();
 					}
-					FileStatus status = new FileStatus(directFile.getCapacity(), directFile.getType().isContainer(), CrailConstants.SHADOW_REPLICATION, CrailConstants.BLOCK_SIZE, directFile.getModificationTime(), directFile.getModificationTime(), permission, CrailConstants.USER, CrailConstants.USER, new Path(filepath).makeQualified(this.getUri(), this.workingDir));	
+					FileStatus status = new FileStatus(directFile.getCapacity(), directFile.getType().isContainer(), CrailConstants.SHADOW_REPLICATION, CrailConstants.BLOCK_SIZE, directFile.getModificationTime(), directFile.getModificationTime(), permission, CrailConstants.USER, CrailConstants.USER, new Path(filepath).makeQualified(this.getUri(), this.workingDir));
 					statusList.add(status);
 				}
 			}
@@ -208,6 +215,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 
 	@Override
 	public boolean mkdirs(Path path, FsPermission permission) throws IOException {
+		statistics.incrementWriteOps(1);
 		try {
 			CrailDirectory file = dfs.create(path.toUri().getRawPath(), CrailNodeType.DIRECTORY, CrailStorageClass.PARENT, CrailLocationClass.DEFAULT, true).get().asDirectory();
 			file.syncDir();
@@ -227,6 +235,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 
 	@Override
 	public FileStatus getFileStatus(Path path) throws IOException {
+		statistics.incrementReadOps(1);
 		CrailNode directFile = null;
 		try {
 			directFile = dfs.lookup(path.toUri().getRawPath()).get();
@@ -246,6 +255,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 
 	@Override
 	public BlockLocation[] getFileBlockLocations(FileStatus file, long start, long len) throws IOException {
+		statistics.incrementReadOps(1);
 		try {
 			CrailBlockLocation[] _locations = dfs.lookup(file.getPath().toUri().getRawPath()).get().asFile().getBlockLocations(start, len);
 			BlockLocation[] locations = new BlockLocation[_locations.length];
@@ -256,8 +266,8 @@ public class CrailHadoopFileSystem extends FileSystem {
 				locations[i].setNames(_locations[i].getNames());
 				locations[i].setHosts(_locations[i].getHosts());
 				locations[i].setTopologyPaths(_locations[i].getTopology());
-				
-			}			
+
+			}
 			return locations;
 		} catch(Exception e){
 			throw new IOException(e);
@@ -266,6 +276,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 
 	@Override
 	public BlockLocation[] getFileBlockLocations(Path path, long start, long len) throws IOException {
+		statistics.incrementReadOps(1);
 		try {
 			CrailBlockLocation[] _locations = dfs.lookup(path.toUri().getRawPath()).get().asFile().getBlockLocations(start, len);
 			BlockLocation[] locations = new BlockLocation[_locations.length];
@@ -276,20 +287,20 @@ public class CrailHadoopFileSystem extends FileSystem {
 				locations[i].setNames(_locations[i].getNames());
 				locations[i].setHosts(_locations[i].getHosts());
 				locations[i].setTopologyPaths(_locations[i].getTopology());
-				
-			}			
+
+			}
 			return locations;
 		} catch(Exception e){
 			throw new IOException(e);
 		}
 	}
-	
+
 	@Override
 	public FsStatus getStatus(Path p) throws IOException {
 		statistics.incrementReadOps(1);
 		return new FsStatus(Long.MAX_VALUE, 0, Long.MAX_VALUE);
 	}
-	
+
 	@Override
 	public void close() throws IOException {
 		try {

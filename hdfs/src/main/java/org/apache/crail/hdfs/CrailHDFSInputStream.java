@@ -24,21 +24,20 @@ import java.nio.ByteBuffer;
 
 import org.apache.crail.CrailBufferedInputStream;
 import org.apache.crail.utils.CrailUtils;
-import org.apache.hadoop.fs.ByteBufferReadable;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.PositionedReadable;
-import org.apache.hadoop.fs.Seekable;
+import org.apache.hadoop.fs.*;
 import org.slf4j.Logger;
 
 
 
 public class CrailHDFSInputStream extends FSDataInputStream {
 	private static final Logger LOG = CrailUtils.getLogger();
-	
+	private final FileSystem.Statistics statistics;
+
 	private CrailBufferedInputStream inputStream;
-	
-	public CrailHDFSInputStream(CrailBufferedInputStream stream) {
-		super(new CrailSeekable(stream));
+
+	public CrailHDFSInputStream(CrailBufferedInputStream stream, FileSystem.Statistics statistics) {
+		super(new CrailSeekable(stream, statistics));
+		this.statistics = statistics;
 		LOG.info("new HDFS stream");
 		this.inputStream = stream;
 	}
@@ -50,19 +49,27 @@ public class CrailHDFSInputStream extends FSDataInputStream {
 
 	@Override
 	public int read(ByteBuffer buf) throws IOException {
-		return inputStream.read(buf);
+		int result = inputStream.read(buf);
+		if (statistics != null && result > 0) {
+			statistics.incrementBytesRead(result);
+		}
+		return result;
 	}
 
 	@Override
 	public int read(long position, byte[] buffer, int offset, int length)
 			throws IOException {
-		return inputStream.read(position, buffer, offset, length);
+		int result = inputStream.read(position, buffer, offset, length);
+		if (statistics != null && result > 0) {
+			statistics.incrementBytesRead(result);
+		}
+		return result;
 	}
-	
+
 	@Override
 	public void readFully(long position, byte[] buffer) throws IOException {
 		readFully(position, buffer, 0, buffer.length);
-	}	
+	}
 
 	@Override
 	public void readFully(long position, byte[] buffer, int offset, int length)
@@ -74,7 +81,7 @@ public class CrailHDFSInputStream extends FSDataInputStream {
 				throw new java.io.EOFException("End of file reached before reading fully.");
 			}
 			nread += nbytes;
-		}		
+		}
 	}
 
 	@Override
@@ -84,34 +91,52 @@ public class CrailHDFSInputStream extends FSDataInputStream {
 
 	@Override
 	public int read() throws IOException {
-		return inputStream.read();
+		int result = inputStream.read();
+		if (statistics != null && result > 0) {
+			statistics.incrementBytesRead(result);
+		}
+		return result;
 	}
 
 	@Override
 	public int available() throws IOException {
 		return inputStream.available();
 	}
-	
+
 	public static class CrailSeekable extends InputStream implements Seekable, PositionedReadable, ByteBufferReadable {
 		private CrailBufferedInputStream inputStream;
-		
-		public CrailSeekable(CrailBufferedInputStream inputStream) {
+		private final FileSystem.Statistics statistics;
+
+		public CrailSeekable(CrailBufferedInputStream inputStream, FileSystem.Statistics statistics) {
 			this.inputStream = inputStream;
+			this.statistics = statistics;
 		}
 
 		@Override
 		public int read() throws IOException {
-			return inputStream.read();
+			int result = inputStream.read();
+			if (statistics != null && result > 0) {
+				statistics.incrementBytesRead(result);
+			}
+			return result;
 		}
 
 		@Override
 		public int read(byte[] b) throws IOException {
-			return inputStream.read(b);
+			int result = inputStream.read(b);
+			if (statistics != null && result > 0) {
+				statistics.incrementBytesRead(result);
+			}
+			return result;
 		}
 
 		@Override
 		public int read(byte[] b, int off, int len) throws IOException {
-			return inputStream.read(b, off, len);
+			int result = inputStream.read(b, off, len);
+			if (statistics != null && result > 0) {
+				statistics.incrementBytesRead(result);
+			}
+			return result;
 		}
 
 		@Override
@@ -146,13 +171,21 @@ public class CrailHDFSInputStream extends FSDataInputStream {
 
 		@Override
 		public int read(ByteBuffer dataBuf) throws IOException {
-			return inputStream.read(dataBuf);
+			int result = inputStream.read(dataBuf);
+			if (statistics != null && result > 0) {
+				statistics.incrementBytesRead(result);
+			}
+			return result;
 		}
 
 		@Override
 		public int read(long position, byte[] buffer, int offset, int length)
 				throws IOException {
-			return inputStream.read(position, buffer, offset, length);
+			int result = inputStream.read(position, buffer, offset, length);
+			if (statistics != null && result > 0) {
+				statistics.incrementBytesRead(result);
+			}
+			return result;
 		}
 
 		@Override
@@ -186,8 +219,8 @@ public class CrailHDFSInputStream extends FSDataInputStream {
 		@Override
 		public boolean seekToNewSource(long targetPos) throws IOException {
 			return false;
-		}		
+		}
 	}
-	
+
 }
 
