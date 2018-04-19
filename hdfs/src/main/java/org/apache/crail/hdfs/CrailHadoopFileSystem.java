@@ -79,7 +79,7 @@ public class CrailHadoopFileSystem extends FileSystem {
 	}
 	
 	public String getScheme() {
-		return "crail";
+		return SCHEME;
 	}
 
 	public URI getUri() {
