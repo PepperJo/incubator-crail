@@ -149,6 +149,13 @@ public class NvmfStagingBufferCache {
 			if (prevEntry.tryFree()) {
 				freeBuffers.add(prevEntry.getBuffer());
 			} else {
+				System.err.println("---> prevEntry pending = " + prevEntry.pending.get() + ", future = ");
+				if (prevEntry.future instanceof NvmfFuture) {
+					NvmfFuture future = (NvmfFuture) prevEntry.future;
+					System.err.println("NvmfFuture = " + future.done);
+				} else {
+					System.err.println(prevEntry.future.getClass().getName() + "?");
+				}
 				/* we can't have two writes to the same location */
 				throw new IllegalStateException();
 			}

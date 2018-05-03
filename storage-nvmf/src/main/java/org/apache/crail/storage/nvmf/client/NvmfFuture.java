@@ -33,7 +33,7 @@ public class NvmfFuture<Command extends NvmIoCommand<? extends NvmIoCommandCapsu
 	private final NvmfStorageEndpoint endpoint;
 	private final Command command;
 	private final Queue<Command> operations;
-	private volatile boolean done;
+	volatile boolean done;
 	private RdmaException exception;
 	private final StorageResult storageResult;
 	private final Response<NvmResponseCapsule> response;
