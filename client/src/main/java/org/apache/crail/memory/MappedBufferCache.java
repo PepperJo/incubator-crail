@@ -24,6 +24,8 @@ import java.io.RandomAccessFile;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileChannel.MapMode;
+import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.apache.crail.CrailBuffer;
 import org.apache.crail.conf.CrailConstants;
@@ -50,13 +52,12 @@ public class MappedBufferCache extends BufferCache {
 		LOG.info("buffer cache, allocationCount " + allocationCount + ", bufferCount " + bufferCount);
 
 		if (allocationCount > 0){
-			id = "" + System.currentTimeMillis();
-			directory = CrailUtils.getCacheDirectory(id);
-			dir = new File(directory);
+			do {
+				id = Long.toString(ThreadLocalRandom.current().nextLong());
+				directory = CrailUtils.getCacheDirectory(id);
+				dir = new File(directory);
+			} while (dir.exists());
 			try {
-				if (dir.exists()) {
-					throw new IOException("A cache directory with the same id " + id + " already exists!");
-				}
 				if (!dir.mkdirs()) {
 					throw new IOException("Cannot create cache directory [crail.cachepath] set to path " + directory + ", check if crail.cachepath exists and has write permissions");
 				}
