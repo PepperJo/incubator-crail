@@ -19,10 +19,7 @@
 package org.apache.crail.tools;
 
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.*;
 
 import org.apache.commons.cli.CommandLine;
@@ -37,6 +34,8 @@ import org.apache.crail.conf.CrailConstants;
 import org.apache.crail.memory.OffHeapBuffer;
 import org.apache.crail.utils.CrailUtils;
 import org.apache.crail.utils.RingBuffer;
+
+import javax.xml.crypto.dsig.keyinfo.KeyValue;
 
 public class CrailBenchmark {
 	private int warmup;
@@ -630,29 +629,70 @@ public class CrailBenchmark {
 		System.out.println("latency [us] " + latencyNs / (double)TimeUnit.MICROSECONDS.toNanos(1) );
 	}
 
-	void putKeyN(String path, int size, int loop, int storageClass, int locationClass, boolean buffered, boolean skipDir)
+	void
+	putKeyN(String path, int size, int loop, int batch, int storageClass, int locationClass, boolean buffered,
+				 boolean skipDir)
 			throws Exception {
-		System.out.println("putKeyN, path " + path + ", size " + size + ", loop " + loop + ", storageClass " + storageClass +
-				", locationClass " + locationClass + ", buffered " + buffered + ", skipDir " + skipDir);
+		class WriteFuture {
+			public WriteFuture(Future<CrailResult> value, CrailOutputStream stream) {
+				this.value = value;
+				this.stream = stream;
+			}
+
+			public Future<CrailResult> value;
+			public CrailOutputStream stream;
+		}
+		System.out.println("putKeyN, path " + path + ", size " + size + ", loop " + loop + ", batch " + batch +
+				", storageClass " + storageClass + ", locationClass " + locationClass + ", buffered " + buffered +
+				", skipDir " + skipDir);
+
+		Queue<Upcoming<CrailNode>> createFutureQueue = new ArrayDeque<>(batch);
+		Queue<WriteFuture> writeFutureQueue = new ArrayDeque<>(batch);
 
 		CrailBuffer buf = fs.allocateBuffer().clear().limit(size).slice();
 		//benchmark
 		System.out.println("starting benchmark...");
 		fs.getStatistics().reset();
 		long start = System.nanoTime();
-		for (int i = 0; i < loop; i++){
-			CrailKeyValue keyValue = fs.create(path + i, CrailNodeType.KEYVALUE, CrailStorageClass.get(storageClass),
-					CrailLocationClass.get(locationClass), !skipDir).get().asKeyValue();
+		int completed = 0;
+		int i = 0;
+		while (completed < loop) {
+			if (createFutureQueue.size() != batch && i < loop) {
+				createFutureQueue.add(fs.create(path + i, CrailNodeType.KEYVALUE,
+						CrailStorageClass.get(storageClass), CrailLocationClass.get(locationClass), !skipDir));
+				i++;
+			}
 
-			buf.clear();
-			if (buffered) {
-				CrailBufferedOutputStream out = keyValue.getBufferedOutputStream(0);
-				out.write(buf.getByteBuffer());
-				out.close();
-			} else {
-				CrailOutputStream out = keyValue.getDirectOutputStream(0);
-				out.write(buf).get();
-				out.close();
+			int queueSize = createFutureQueue.size();
+			for (int j = 0; j < queueSize; j++) {
+				Upcoming<CrailNode> future = createFutureQueue.remove();
+				if (future.isDone()) {
+					CrailKeyValue keyValue = future.get().asKeyValue();
+					buf.clear();
+					if (buffered) {
+						CrailBufferedOutputStream out = keyValue.getBufferedOutputStream(0);
+						out.write(buf.getByteBuffer());
+						out.close();
+						completed++;
+					} else {
+						CrailOutputStream out = keyValue.getDirectOutputStream(0);
+						writeFutureQueue.add(new WriteFuture(out.write(buf), out));
+					}
+				} else {
+					createFutureQueue.add(future);
+				}
+			}
+
+			while ((queueSize = writeFutureQueue.size()) == batch) {
+				for (int j = 0; j < queueSize; j++) {
+					WriteFuture writeFuture = writeFutureQueue.remove();
+					if (writeFuture.value.isDone()) {
+						writeFuture.stream.close();
+						completed++;
+					} else {
+						writeFutureQueue.add(writeFuture);
+					}
+				}
 			}
 		}
 		long end = System.nanoTime();
@@ -664,23 +704,51 @@ public class CrailBenchmark {
 	void getKeyN(String path, int size, int loop, boolean buffered) throws Exception {
 		System.out.println("getKeyN, path " + path + ", size " + size + ", loop " + loop);
 
-		CrailBuffer buf = fs.allocateBuffer().clear().limit(size).slice();
+		CrailBuffer buf = fs.allocateBuffer();
 
 		//benchmark
 		System.out.println("starting benchmark...");
 		fs.getStatistics().reset();
 		long start = System.nanoTime();
 		for (int i = 0; i < loop; i++){
+			buf.clear();
+			buf.limit(size);
 			if (buffered) {
 				CrailBufferedInputStream in = fs.lookup(path + i).get().asKeyValue().getBufferedInputStream(0);
-				buf.clear();
 				in.read(buf.getByteBuffer());
 				in.close();
 			} else {
 				CrailInputStream in = fs.lookup(path + i).get().asKeyValue().getDirectInputStream(0);
-				buf.clear();
 				in.read(buf).get();
 				in.close();
+			}
+		}
+		long end = System.nanoTime();
+		printLatency(start, end, loop);
+
+		fs.getStatistics().print("close");
+	}
+
+	void removeKeyN(String path, int loop, int batch) {
+		System.out.println("removeKeyN, path " + path + ", loop " + loop);
+
+		Upcoming<CrailNode> futures[] = new Upcoming[batch];
+
+		//benchmark
+		System.out.println("starting benchmark...");
+		fs.getStatistics().reset();
+		long start = System.nanoTime();
+		for (int i = 0; i < loop; i++){
+			for (int j = 0; j < batch; j++,i++) {
+				try {
+					futures[j] = fs.delete(path + i, false);
+				} catch (Exception e) {
+				}
+			}
+			for (int j = 0; j < batch; j++) {
+				try {
+					futures[j].get();
+				} catch (Exception e) {}
 			}
 		}
 		long end = System.nanoTime();
@@ -1178,11 +1246,15 @@ public class CrailBenchmark {
 			benchmark.close();
 		} else if (type.equalsIgnoreCase("putKeyN")) {
 			benchmark.open();
-			benchmark.putKeyN(filename, size, loop, storageClass, locationClass, useBuffered, skipDir);
+			benchmark.putKeyN(filename, size, loop, batch, storageClass, locationClass, useBuffered, skipDir);
 			benchmark.close();
 		} else if (type.equalsIgnoreCase("getKeyN")) {
 			benchmark.open();
 			benchmark.getKeyN(filename, size, loop, useBuffered);
+			benchmark.close();
+		} else if (type.equalsIgnoreCase("removeKeyN")) {
+			benchmark.open();
+			benchmark.removeKeyN(filename, loop, batch);
 			benchmark.close();
 		} else if (type.equals("getFile")){
 			benchmark.open();
