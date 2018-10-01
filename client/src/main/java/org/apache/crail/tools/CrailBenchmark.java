@@ -622,6 +622,12 @@ public class CrailBenchmark {
 		fs.create(filename, CrailNodeType.MULTIFILE, CrailStorageClass.get(storageClass), CrailLocationClass.DEFAULT, true).get().syncDir();
 	}
 
+	void initListNull(ArrayList<?> list, int size) {
+		for (int i = 0; i < size; i++) {
+			list.add(null);
+		}
+	}
+
 	private static void printLatency(long startTimeNs, long endTimeNs, int count) {
 		long executionTimeNs = endTimeNs - startTimeNs;
 		double latencyNs = executionTimeNs / (double)count;
@@ -633,65 +639,101 @@ public class CrailBenchmark {
 	putKeyN(String path, int size, int loop, int batch, int storageClass, int locationClass, boolean buffered,
 				 boolean skipDir)
 			throws Exception {
-		class WriteFuture {
-			public WriteFuture(Future<CrailResult> value, CrailOutputStream stream) {
-				this.value = value;
-				this.stream = stream;
-			}
-
-			public Future<CrailResult> value;
-			public CrailOutputStream stream;
-		}
 		System.out.println("putKeyN, path " + path + ", size " + size + ", loop " + loop + ", batch " + batch +
 				", storageClass " + storageClass + ", locationClass " + locationClass + ", buffered " + buffered +
 				", skipDir " + skipDir);
 
-		Queue<Upcoming<CrailNode>> createFutureQueue = new ArrayDeque<>(batch);
-		Queue<WriteFuture> writeFutureQueue = new ArrayDeque<>(batch);
+		ArrayList<Upcoming<CrailNode>> createFutures = new ArrayList<>(batch);
+		initListNull(createFutures, batch);
+		ArrayList<Future<CrailResult>> writeFutures = new ArrayList<>(batch);
+		initListNull(writeFutures, batch);
+		ArrayList<CrailOutputStream> streams = new ArrayList<>(batch);
+		initListNull(streams, batch);
+		ArrayList<Future<Void>> syncFutures = new ArrayList<>(batch);
+		initListNull(syncFutures, batch);
 
-		CrailBuffer buf = fs.allocateBuffer().clear().limit(size).slice();
+		Future<Void> xx = new Future<Void>() {
+			@Override
+			public boolean cancel(boolean b) {
+				return false;
+			}
+
+			@Override
+			public boolean isCancelled() {
+				return false;
+			}
+
+			@Override
+			public boolean isDone() {
+				return false;
+			}
+
+			@Override
+			public Void get() throws InterruptedException, ExecutionException {
+				return null;
+			}
+
+			@Override
+			public Void get(long l, TimeUnit timeUnit) throws InterruptedException, ExecutionException, TimeoutException {
+				return null;
+			}
+		};
+
+		CrailBuffer buf[] = new CrailBuffer[batch];
+		for (int i = 0; i < buf.length; i++) {
+			buf[i] = fs.allocateBuffer().clear().limit(size).slice();
+		}
 		//benchmark
 		System.out.println("starting benchmark...");
 		fs.getStatistics().reset();
 		long start = System.nanoTime();
 		int completed = 0;
 		int i = 0;
+		int index = 0;
+		int inflight = 0;
 		while (completed < loop) {
-			if (createFutureQueue.size() != batch && i < loop) {
-				createFutureQueue.add(fs.create(path + i, CrailNodeType.KEYVALUE,
-						CrailStorageClass.get(storageClass), CrailLocationClass.get(locationClass), !skipDir));
-				i++;
-			}
-
-			int queueSize = createFutureQueue.size();
-			for (int j = 0; j < queueSize; j++) {
-				Upcoming<CrailNode> future = createFutureQueue.remove();
-				if (future.isDone()) {
-					CrailKeyValue keyValue = future.get().asKeyValue();
-					buf.clear();
-					if (buffered) {
-						CrailBufferedOutputStream out = keyValue.getBufferedOutputStream(0);
-						out.write(buf.getByteBuffer());
-						out.close();
-						completed++;
-					} else {
-						CrailOutputStream out = keyValue.getDirectOutputStream(0);
-						writeFutureQueue.add(new WriteFuture(out.write(buf), out));
-					}
-				} else {
-					createFutureQueue.add(future);
+			for (int j = 0; j < batch && i < loop && inflight < batch; j++) {
+				if (createFutures.get(j) == null) {
+					createFutures.set(j, fs.create(path + i, CrailNodeType.KEYVALUE,
+							CrailStorageClass.get(storageClass), CrailLocationClass.get(locationClass), !skipDir));
+					i++;
+					inflight++;
 				}
 			}
 
-			while ((queueSize = writeFutureQueue.size()) == batch) {
-				for (int j = 0; j < queueSize; j++) {
-					WriteFuture writeFuture = writeFutureQueue.remove();
-					if (writeFuture.value.isDone()) {
-						writeFuture.stream.close();
-						completed++;
-					} else {
-						writeFutureQueue.add(writeFuture);
+			for (int j = 0; j < createFutures.size(); j++) {
+				Upcoming<CrailNode> createFuture = createFutures.get(j);
+				if (createFuture != null && createFuture.isDone()) {
+					CrailKeyValue keyValue = createFuture.get().asKeyValue();
+					index = (index + 1) % batch;
+					buf[index].clear();
+					CrailOutputStream out = keyValue.getDirectOutputStream(0);
+					for (int k = 0; k < syncFutures.size(); k++) {
+						if (syncFutures.get(k) == null) {
+							writeFutures.set(k, out.write(buf[index]));
+							streams.set(k, out);
+							syncFutures.set(k, xx);
+						}
 					}
+					createFutures.set(j, null);
+				}
+			}
+
+			for (int j = 0; j < writeFutures.size(); j++) {
+				Future<CrailResult> writeFuture = writeFutures.get(j);
+				if (writeFuture != null && writeFuture.isDone()) {
+					syncFutures.set(j, streams.get(j).sync());
+					writeFutures.set(j, null);
+				}
+			}
+
+			for (int j = 0; j < syncFutures.size(); j++) {
+				Future<Void> future = syncFutures.get(j);
+				if (future != null && future.isDone()) {
+					streams.get(j).close();
+					syncFutures.set(j, null);
+					completed++;
+					inflight--;
 				}
 			}
 		}
@@ -836,14 +878,20 @@ public class CrailBenchmark {
 		long start = System.currentTimeMillis();
 		for (int i = 0; i < loop; i++){
 			//single operation == loop
-			for (int j = 0; j < batch; j++){
+//			for (int j = 0; j < batch; j++){
+//				Future<CrailNode> future = fs.lookup(filename);
+//				fileQueue.add(future);
+//			}
+//			for (int j = 0; j < batch; j++){
+//				Future<CrailNode> future = fileQueue.poll();
+//				future.get();
+//			}
+			for (int j = fileQueue.size(); j < batch; j++){
 				Future<CrailNode> future = fs.lookup(filename);
 				fileQueue.add(future);
 			}
-			for (int j = 0; j < batch; j++){
-				Future<CrailNode> future = fileQueue.poll();
-				future.get();
-			}
+			Future<CrailNode> future = fileQueue.poll();
+			future.get();
 		}
 		long end = System.currentTimeMillis();
 		double executionTime = ((double) (end - start));
