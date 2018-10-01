@@ -643,102 +643,51 @@ public class CrailBenchmark {
 				", storageClass " + storageClass + ", locationClass " + locationClass + ", buffered " + buffered +
 				", skipDir " + skipDir);
 
-		ArrayList<Upcoming<CrailNode>> createFutures = new ArrayList<>(batch);
-		initListNull(createFutures, batch);
-		ArrayList<Future<CrailResult>> writeFutures = new ArrayList<>(batch);
-		initListNull(writeFutures, batch);
-		ArrayList<CrailOutputStream> streams = new ArrayList<>(batch);
-		initListNull(streams, batch);
-		ArrayList<Future<Void>> syncFutures = new ArrayList<>(batch);
-		initListNull(syncFutures, batch);
-
-		Future<Void> xx = new Future<Void>() {
-			@Override
-			public boolean cancel(boolean b) {
-				return false;
-			}
-
-			@Override
-			public boolean isCancelled() {
-				return false;
-			}
-
-			@Override
-			public boolean isDone() {
-				return false;
-			}
-
-			@Override
-			public Void get() throws InterruptedException, ExecutionException {
-				return null;
-			}
-
-			@Override
-			public Void get(long l, TimeUnit timeUnit) throws InterruptedException, ExecutionException, TimeoutException {
-				return null;
-			}
-		};
+		Queue<Upcoming<CrailNode>> createFutures = new ArrayDeque<>(batch);
 
 		CrailBuffer buf[] = new CrailBuffer[batch];
 		for (int i = 0; i < buf.length; i++) {
 			buf[i] = fs.allocateBuffer().clear().limit(size).slice();
 		}
+
+		long times[] = new long[100];
+
 		//benchmark
 		System.out.println("starting benchmark...");
 		fs.getStatistics().reset();
 		long start = System.nanoTime();
 		int completed = 0;
-		int i = 0;
-		int index = 0;
 		int inflight = 0;
+		int i = 0;
 		while (completed < loop) {
-			for (int j = 0; j < batch && i < loop && inflight < batch; j++) {
-				if (createFutures.get(j) == null) {
-					createFutures.set(j, fs.create(path + i, CrailNodeType.KEYVALUE,
-							CrailStorageClass.get(storageClass), CrailLocationClass.get(locationClass), !skipDir));
-					i++;
-					inflight++;
-				}
+			if (createFutures.size() != batch && inflight < batch) {
+				createFutures.add(fs.create(path + i, CrailNodeType.KEYVALUE, CrailStorageClass.DEFAULT,
+						CrailLocationClass.DEFAULT, !skipDir));
+				i++;
+				inflight++;
 			}
 
-			for (int j = 0; j < createFutures.size(); j++) {
-				Upcoming<CrailNode> createFuture = createFutures.get(j);
-				if (createFuture != null && createFuture.isDone()) {
-					CrailKeyValue keyValue = createFuture.get().asKeyValue();
-					index = (index + 1) % batch;
-					buf[index].clear();
-					CrailOutputStream out = keyValue.getDirectOutputStream(0);
-					for (int k = 0; k < syncFutures.size(); k++) {
-						if (syncFutures.get(k) == null) {
-							writeFutures.set(k, out.write(buf[index]));
-							streams.set(k, out);
-							syncFutures.set(k, xx);
-						}
-					}
-					createFutures.set(j, null);
+			Upcoming<CrailNode> createFuture = createFutures.peek();
+			if (createFuture != null && createFuture.isDone()) {
+				//TODO: write & sync
+				createFutures.remove();
+				CrailKeyValue keyValue = createFuture.get().asKeyValue();
+				long a = System.nanoTime();
+				keyValue.getDirectOutputStream(0);
+				long b = System.nanoTime();
+				if (completed > (loop - times.length)) {
+					times[completed % times.length] = b - a;
 				}
-			}
-
-			for (int j = 0; j < writeFutures.size(); j++) {
-				Future<CrailResult> writeFuture = writeFutures.get(j);
-				if (writeFuture != null && writeFuture.isDone()) {
-					syncFutures.set(j, streams.get(j).sync());
-					writeFutures.set(j, null);
-				}
-			}
-
-			for (int j = 0; j < syncFutures.size(); j++) {
-				Future<Void> future = syncFutures.get(j);
-				if (future != null && future.isDone()) {
-					streams.get(j).close();
-					syncFutures.set(j, null);
-					completed++;
-					inflight--;
-				}
+				inflight--;
+				completed++;
 			}
 		}
 		long end = System.nanoTime();
 		printLatency(start, end, loop);
+
+		for (long t : times) {
+			System.out.println("---> " + t);
+		}
 
 		fs.getStatistics().print("close");
 	}
