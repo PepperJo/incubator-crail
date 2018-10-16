@@ -21,14 +21,8 @@ package org.apache.crail.core;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.StringTokenizer;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -84,6 +78,7 @@ public class CoreDataStore extends CrailStore {
 	private AtomicLong streamCounter;
 	private ConcurrentHashMap<Long, CoreInputStream> openInputStreams;
 	private ConcurrentHashMap<Long, CoreOutputStream> openOutputStreams;
+	private Queue<CoreOutputStream> freeOutputStreams;
 
 	private BlockCache blockCache;
 	private NextBlockCache nextBlockCache;
@@ -146,6 +141,8 @@ public class CoreDataStore extends CrailStore {
 		this.nextBlockCache = new NextBlockCache();
 		this.openInputStreams = new ConcurrentHashMap<Long, CoreInputStream>();
 		this.openOutputStreams = new ConcurrentHashMap<Long, CoreOutputStream>();
+		//TODO: make size configurable
+		this.freeOutputStreams = new ArrayBlockingQueue<>(32);
 		this.streamCounter = new AtomicLong(0);
 		this.isOpen = true;
 		this.bufferCheckpoint = new BufferCheckpoint();
@@ -556,7 +553,15 @@ public class CoreDataStore extends CrailStore {
 	//-------------------------------------------------------------
 
 	CoreOutputStream getOutputStream(CoreNode file, long writeHint) throws Exception {
-		CoreOutputStream outputStream = new CoreOutputStream(file, streamCounter.incrementAndGet(), writeHint);
+		CoreOutputStream outputStream = null;
+		if (!freeOutputStreams.isEmpty()) {
+			outputStream = freeOutputStreams.poll();
+		}
+		if (outputStream == null) {
+			outputStream = new CoreOutputStream(file, streamCounter.incrementAndGet(), writeHint);
+		} else {
+			outputStream.reset(file, streamCounter.incrementAndGet(), writeHint);
+		}
 		openOutputStreams.put(outputStream.getStreamId(), outputStream);
 
 		if (CrailConstants.STATISTICS){
@@ -613,7 +618,7 @@ public class CoreDataStore extends CrailStore {
 				streamStats.incCloseOutputDir();
 			}
 		}
-
+		freeOutputStreams.add(coreStream);
 		return stream;
 	}
 

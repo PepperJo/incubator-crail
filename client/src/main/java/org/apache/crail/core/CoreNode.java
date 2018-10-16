@@ -33,21 +33,21 @@ public class CoreNode implements CrailNode {
 	protected FileInfo fileInfo;
 	protected String path;
 	private LinkedBlockingQueue<CoreSyncOperation> syncOperations;
-	
+
 	public static CoreNode create(CoreDataStore fs, FileInfo fileInfo, String path) {
 		if (fileInfo.getType().isContainer()){
-			return new CoreDirectory(fs, fileInfo, path);		
+			return new CoreDirectory(fs, fileInfo, path);
 		} else {
 			return new CoreFile(fs, fileInfo, path);
 		}
-	}	
-	
+	}
+
 	protected CoreNode(CoreDataStore fs, FileInfo fileInfo, String path){
 		this.fs = fs;
 		this.fileInfo = fileInfo;
 		this.path = path;
 		this.syncOperations = new LinkedBlockingQueue<CoreSyncOperation>();
-	}	
+	}
 
 	@Override
 	public CoreDataStore getFileSystem() {
@@ -58,81 +58,81 @@ public class CoreNode implements CrailNode {
 	public String getPath() {
 		return path;
 	}
-	
+
 	public long getModificationTime() {
 		return fileInfo.getModificationTime();
-	}	
-	
+	}
+
 	public long getCapacity() {
 		return fileInfo.getCapacity();
 	}
-	
+
 	public CrailNodeType getType() {
 		return fileInfo.getType();
 	}
-	
+
 	public long getFd() {
 		return fileInfo.getFd();
-	}	
+	}
 
 	@Override
 	public CoreNode syncDir() throws Exception {
 		while(!syncOperations.isEmpty()){
 			CoreSyncOperation syncOp = syncOperations.poll();
 			syncOp.close();
-		}			
+		}
 		return this;
 	}
-	
+
 	public CoreFile asFile() throws Exception {
 		throw new Exception("Type of file unclear");
 	}
-	
+
 	public CoreDirectory asContainer() throws Exception {
 		throw new Exception("Type of file unclear");
-	}	
-	
+	}
+
 	public CoreDirectory asDirectory() throws Exception {
 		throw new Exception("Type of file unclear");
-	}	
-	
+	}
+
 	public CrailMultiFile asMultiFile() throws Exception {
 		throw new Exception("Type of file unclear");
 	}
-	
+
 	public CrailTable asTable() throws Exception {
 		throw new Exception("Type of file unclear");
-	}	
-	
+	}
+
 	public CrailKeyValue asKeyValue() throws Exception {
 		throw new Exception("Type of file unclear");
-	}	
-	
+	}
+
 	public CrailBlockLocation[] getBlockLocations(long start, long len) throws Exception {
 		return fs.getBlockLocations(path, start, len);
-	}	
-	
+	}
+
 	protected CoreInputStream getInputStream(long readHint) throws Exception{
 		return fs.getInputStream(this, readHint);
-	}	
-	
+	}
+
 	CoreOutputStream getOutputStream(long writeHint) throws Exception {
 		return fs.getOutputStream(this, writeHint);
-	}	
+	}
 
 	void closeInputStream(CoreInputStream coreStream) throws Exception {
 		fs.unregisterInputStream(coreStream);
 	}
-	
+
 	void closeOutputStream(CoreOutputStream coreStream) throws Exception {
 		syncDir();
 		fs.unregisterOutputStream(coreStream);
-	}	
-	
+	}
+
 	FileInfo getFileInfo(){
 		return fileInfo;
-	}	
-	
+	}
+
 	void addSyncOperation(CoreSyncOperation operation){
 		this.syncOperations.add(operation);
 	}

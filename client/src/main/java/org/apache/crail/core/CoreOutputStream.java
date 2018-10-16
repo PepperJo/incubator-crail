@@ -19,7 +19,10 @@
 package org.apache.crail.core;
 
 import java.io.IOException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.crail.CrailBuffer;
@@ -29,6 +32,7 @@ import org.apache.crail.conf.CrailConstants;
 import org.apache.crail.metadata.BlockInfo;
 import org.apache.crail.storage.StorageEndpoint;
 import org.apache.crail.storage.StorageFuture;
+import org.apache.crail.storage.StorageResult;
 import org.apache.crail.utils.CrailImmediateOperation;
 import org.apache.crail.utils.CrailUtils;
 import org.slf4j.Logger;
@@ -42,12 +46,25 @@ public class CoreOutputStream extends CoreStream implements CrailOutputStream {
 
 	public CoreOutputStream(CoreNode file, long streamId, long writeHint) throws Exception {
 		super(file, streamId, file.getCapacity());
-		this.writeHint = Math.max(0, writeHint);
-		this.inFlight = new AtomicLong(0);
+		this.inFlight = new AtomicLong();
+		resetOutputStream(file, streamId, writeHint);
+	}
+
+	private void resetOutputStream(CoreNode file, long streamId, long writeHint) {
+		if (writeHint < 0) {
+			throw new IllegalArgumentException("write hint cannot be negative");
+		}
+		this.writeHint = writeHint;
+		this.inFlight.set(0);
 		this.open = true;
 		if (CrailConstants.DEBUG){
 			LOG.info("CoreOutputStream, open, path " + file.getPath() + ", fd " + file.getFd() + ", streamId " + streamId + ", isDir " + file.getType().isDirectory() + ", writeHint " + this.writeHint);
 		}
+	}
+
+	public void reset(CoreNode file, long streamId, long writeHint) {
+		resetOutputStream(file, streamId, writeHint);
+		resetCoreStream(file, streamId, file.getCapacity());
 	}
 
 	final public Future<CrailResult> write(CrailBuffer dataBuf) throws Exception {

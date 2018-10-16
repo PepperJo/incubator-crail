@@ -64,22 +64,27 @@ public abstract class CoreStream {
 	abstract void update(long newCapacity);
 
 	CoreStream(CoreNode node, long streamId, long fileOffset) throws Exception {
-		this.node = node;
 		this.fs = node.getFileSystem();
-		this.fileInfo = node.getFileInfo();
+		this.ioStats = new CoreIOStatistics("core");
+		this.blockMap = new HashMap<Integer, CoreSubOperation>();
+		this.pendingBlocks = new LinkedList<RpcFuture<RpcGetBlock>>();
 		this.endpointCache = fs.getDatanodeEndpointCache();
 		this.namenodeClientRpc = fs.getNamenodeClientRpc();
+		this.bufferCheckpoint = fs.getBufferCheckpoint();
+		resetCoreStream(node, streamId, fileOffset);
+	}
+
+	public void resetCoreStream(CoreNode node, long streamId, long fileOffset) {
+		this.node = node;
+		this.fileInfo = node.getFileInfo();
 		this.blockCache = fs.getBlockCache(fileInfo.getFd());
 		this.nextBlockCache = fs.getNextBlockCache(fileInfo.getFd());
-		this.bufferCheckpoint = fs.getBufferCheckpoint();
-
 		this.position = fileOffset;
 		this.syncedCapacity = fileInfo.getCapacity();
 		this.streamId = streamId;
-		this.ioStats = new CoreIOStatistics("core");
 
-		this.blockMap = new HashMap<Integer, CoreSubOperation>();
-		this.pendingBlocks = new LinkedList<RpcFuture<RpcGetBlock>>();
+		this.blockMap.clear();
+		this.pendingBlocks.clear();
 	}
 
 	final CoreDataOperation dataOperation(CrailBuffer dataBuf) throws Exception {
@@ -177,13 +182,15 @@ public abstract class CoreStream {
 		}
 	}
 
+	private final static Future<Void> noOpFuture = new NoOperation();
+
 	Future<Void> sync() throws IOException {
 		Future<Void> future = null;
 		if (fileInfo.getToken() > 0 && syncedCapacity < fileInfo.getCapacity()){
 			syncedCapacity = fileInfo.getCapacity();
 			future = new SyncNodeFuture(namenodeClientRpc.setFile(fileInfo, false));
 		} else {
-			future = new NoOperation();
+			future = noOpFuture;
 		}
 
 		return future;
