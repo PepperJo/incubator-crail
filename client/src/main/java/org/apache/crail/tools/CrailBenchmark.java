@@ -650,8 +650,6 @@ public class CrailBenchmark {
 			buf[i] = fs.allocateBuffer().clear().limit(size).slice();
 		}
 
-//		long times[] = new long[100];
-
 		//benchmark
 		System.out.println("starting benchmark...");
 		fs.getStatistics().reset();
@@ -700,33 +698,50 @@ public class CrailBenchmark {
 		long end = System.nanoTime();
 		printLatency(start, end, loop);
 
-//		for (long t : times) {
-//			System.out.println("---> " + t);
-//		}
-
 		fs.getStatistics().print("close");
 	}
 
-	void getKeyN(String path, int size, int loop, boolean buffered) throws Exception {
-		System.out.println("getKeyN, path " + path + ", size " + size + ", loop " + loop);
+	void getKeyN(String path, int size, int loop, boolean buffered, int batch) throws Exception {
+		System.out.println("getKeyN, path " + path + ", size " + size + ", loop " + loop + ", batch " + batch);
 
-		CrailBuffer buf = fs.allocateBuffer();
+		Queue<Upcoming<CrailNode>> lookupFutures = new ArrayDeque<>(batch);
+		Queue<Future<CrailResult>> readFutures = new ArrayDeque<>(batch);
+
+		CrailBuffer buf[] = new CrailBuffer[batch];
+		for (int i = 0; i < buf.length; i++) {
+			buf[i] = fs.allocateBuffer().clear().limit(size).slice();
+		}
 
 		//benchmark
 		System.out.println("starting benchmark...");
 		fs.getStatistics().reset();
+		int i = 0;
+		int idx = 0;
+		int inflight = 0;
+		int completed = 0;
 		long start = System.nanoTime();
-		for (int i = 0; i < loop; i++){
-			buf.clear();
-			buf.limit(size);
-			if (buffered) {
-				CrailBufferedInputStream in = fs.lookup(path + i).get().asKeyValue().getBufferedInputStream(0);
-				in.read(buf.getByteBuffer());
-				in.close();
-			} else {
-				CrailInputStream in = fs.lookup(path + i).get().asKeyValue().getDirectInputStream(0);
-				in.read(buf).get();
-				in.close();
+		while (completed < loop) {
+			while (lookupFutures.size() != batch && inflight < batch && i < loop) {
+				lookupFutures.add(fs.lookup(path + i));
+				i++;
+				inflight++;
+			}
+
+			Upcoming<CrailNode> lookupFuture = lookupFutures.peek();
+			if (lookupFuture != null && lookupFuture.isDone()) {
+				lookupFutures.remove();
+				CrailKeyValue kv = lookupFuture.get().asKeyValue();
+				CrailInputStream in = kv.getDirectInputStream(0);
+				buf[idx].clear();
+				readFutures.add(in.read(buf[idx]));
+				idx = (idx + 1) % buf.length;
+			}
+
+			Future<CrailResult> readFuture = readFutures.peek();
+			if (readFuture != null && readFuture.isDone()) {
+				readFutures.remove();
+				inflight--;
+				completed++;
 			}
 		}
 		long end = System.nanoTime();
@@ -1262,7 +1277,7 @@ public class CrailBenchmark {
 			benchmark.close();
 		} else if (type.equalsIgnoreCase("getKeyN")) {
 			benchmark.open();
-			benchmark.getKeyN(filename, size, loop, useBuffered);
+			benchmark.getKeyN(filename, size, loop, useBuffered, batch);
 			benchmark.close();
 		} else if (type.equalsIgnoreCase("removeKeyN")) {
 			benchmark.open();
