@@ -31,8 +31,8 @@
   </parent>
 
   <scm>
-    <connection>scm:git:git://git.apache.org/incubator-crail.git</connection>
-    <developerConnection>scm:git:https://git-wip-us.apache.org/repos/asf/incubator-crail.git</developerConnection>
+      <connection>scm:git:git@github.com:PepperJo/incubator-crail.git</connection>
+    <developerConnection>scm:git:git@github.com:PepperJo/incubator-crail.git</developerConnection>
     <url>https://git-wip-us.apache.org/repos/asf?p=incubator-crail.git</url>
     <tag>HEAD</tag>
   </scm>
