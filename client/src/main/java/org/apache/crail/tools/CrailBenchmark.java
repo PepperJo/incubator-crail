@@ -712,6 +712,9 @@ public class CrailBenchmark {
 			buf[i] = fs.allocateBuffer().clear().limit(size).slice();
 		}
 
+		long lat[] = new long[batch];
+		long lat_sum = 0;
+
 		//benchmark
 		System.out.println("starting benchmark...");
 		fs.getStatistics().reset();
@@ -722,6 +725,7 @@ public class CrailBenchmark {
 		long start = System.nanoTime();
 		while (completed < loop) {
 			while (lookupFutures.size() != batch && inflight < batch && i < loop) {
+				lat[i % lat.length] = System.nanoTime();
 				lookupFutures.add(fs.lookup(path + i));
 				i++;
 				inflight++;
@@ -741,11 +745,15 @@ public class CrailBenchmark {
 			if (readFuture != null && readFuture.isDone()) {
 				readFutures.remove();
 				inflight--;
+				int lat_idx = completed % lat.length;
+				lat_sum += System.nanoTime() - lat[lat_idx];
 				completed++;
 			}
 		}
 		long end = System.nanoTime();
 		printLatency(start, end, loop);
+
+		System.out.println("latency/op [ns] = " + lat_sum / (double)loop);
 
 		fs.getStatistics().print("close");
 	}
@@ -854,17 +862,8 @@ public class CrailBenchmark {
 		System.out.println("starting benchmark...");
 		fs.getStatistics().reset();
 		LinkedBlockingQueue<Future<CrailNode>> fileQueue = new LinkedBlockingQueue<Future<CrailNode>>();
-		long start = System.currentTimeMillis();
+		long start = System.nanoTime();
 		for (int i = 0; i < loop; i++){
-			//single operation == loop
-//			for (int j = 0; j < batch; j++){
-//				Future<CrailNode> future = fs.lookup(filename);
-//				fileQueue.add(future);
-//			}
-//			for (int j = 0; j < batch; j++){
-//				Future<CrailNode> future = fileQueue.poll();
-//				future.get();
-//			}
 			for (int j = fileQueue.size(); j < batch; j++){
 				Future<CrailNode> future = fs.lookup(filename);
 				fileQueue.add(future);
@@ -872,11 +871,8 @@ public class CrailBenchmark {
 			Future<CrailNode> future = fileQueue.poll();
 			future.get();
 		}
-		long end = System.currentTimeMillis();
-		double executionTime = ((double) (end - start));
-		double latency = executionTime*1000.0 / ((double) batch);
-		System.out.println("execution time [ms] " + executionTime);
-		System.out.println("latency [us] " + latency);
+		long end = System.nanoTime();
+		printLatency(start, end, loop);
 
 		fs.getStatistics().print("close");
 	}
@@ -1276,9 +1272,14 @@ public class CrailBenchmark {
 			benchmark.putKeyN(filename, size, loop, batch, storageClass, locationClass, useBuffered, skipDir);
 			benchmark.close();
 		} else if (type.equalsIgnoreCase("getKeyN")) {
-			benchmark.open();
-			benchmark.getKeyN(filename, size, loop, useBuffered, batch);
-			benchmark.close();
+			if (keepOpen) benchmark.open();
+			for (int i = 0; i < experiments; i++){
+				System.out.println("experiment " + i);
+				if (!keepOpen) benchmark.open();
+				benchmark.getKeyN(filename, size, loop, useBuffered, batch);
+				if (!keepOpen) benchmark.close();
+			}
+			if (keepOpen) benchmark.close();
 		} else if (type.equalsIgnoreCase("removeKeyN")) {
 			benchmark.open();
 			benchmark.removeKeyN(filename, loop, batch);
