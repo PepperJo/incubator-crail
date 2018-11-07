@@ -650,6 +650,9 @@ public class CrailBenchmark {
 			buf[i] = fs.allocateBuffer().clear().limit(size).slice();
 		}
 
+		long lat[] = new long[batch];
+		long lat_sum = 0;
+
 		//benchmark
 		System.out.println("starting benchmark...");
 		fs.getStatistics().reset();
@@ -660,6 +663,7 @@ public class CrailBenchmark {
 		int idx = 0;
 		while (completed < loop) {
 			while (createFutures.size() != batch && inflight < batch && i < loop) {
+				lat[i % lat.length] = System.nanoTime();
 				createFutures.add(fs.create(path + i, CrailNodeType.KEYVALUE, CrailStorageClass.DEFAULT,
 						CrailLocationClass.DEFAULT, !skipDir));
 				i++;
@@ -690,6 +694,8 @@ public class CrailBenchmark {
 			if (syncFuture != null && syncFuture.isDone()) {
 				syncFutures.remove();
 				outputStreams.remove().close();
+				int lat_idx = completed % lat.length;
+				lat_sum += System.nanoTime() - lat[lat_idx];
 				inflight--;
 				completed++;
 			}
@@ -697,6 +703,8 @@ public class CrailBenchmark {
 		}
 		long end = System.nanoTime();
 		printLatency(start, end, loop);
+
+		System.out.println("latency/op [ns] = " + lat_sum / (double)loop);
 
 		fs.getStatistics().print("close");
 	}
